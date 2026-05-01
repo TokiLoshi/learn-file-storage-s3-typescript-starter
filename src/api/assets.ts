@@ -22,5 +22,5 @@ export function getAssetDiskPath(cfg: ApiConfig, assetPath: string) {
 }
 
 export function getAssetURL(cfg: ApiConfig, assetPath: string) {
-	return `http/localhost:${cfg.port}/assets/${assetPath}`;
+	return `http://localhost:${cfg.port}/assets/${assetPath}`;
 }
