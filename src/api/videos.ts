@@ -49,18 +49,23 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 	}
 
 	const fileExtension = mediaTypeToExt(mediaType);
-	const fileName = `${randomBytes(32).toString("hex")}.${fileExtension}`;
+	const fileName = `${randomBytes(32).toString("hex")}${fileExtension}`;
 	const assetDiskPath = getAssetDiskPath(cfg, fileName);
 
 	let s3Key;
+	let processedVideo;
 
 	try {
 		await Bun.write(assetDiskPath, file);
 		const aspectRatio = await getVideoAspectRatio(assetDiskPath);
 		s3Key = `${aspectRatio}/${fileName}`;
-		await cfg.s3Client.file(s3Key).write(Bun.file(assetDiskPath));
+		processedVideo = await processVideoForFastStart(assetDiskPath);
+		await cfg.s3Client.file(s3Key).write(Bun.file(processedVideo));
 	} finally {
 		await unlink(assetDiskPath);
+		if (processedVideo) {
+			await unlink(processedVideo);
+		}
 	}
 
 	const videoUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${s3Key}`;
@@ -87,7 +92,6 @@ export async function getVideoAspectRatio(filePath: string) {
 		filePath,
 	]);
 	// console log whatever cursed thing comse back
-	console.log(proc);
 
 	// Configure Bun.spawn to send results to stdout and sterr
 	const stdoutText = await new Response(proc.stdout).text();
@@ -121,4 +125,39 @@ export async function getVideoAspectRatio(filePath: string) {
 		return "portrait";
 	}
 	return "other";
+}
+
+export async function processVideoForFastStart(inputFilePath: string) {
+	// create a new string for outputfilepath - append the .processed to the file input
+	// this is the path to the temp file on disk
+	// use bun.spawn to create a new process
+	// command: ffmpeg -i, inputFilePath, -movflags, faststart, -map_metadata, 0, -codec, copy, -f, mp4, outputFilePath
+	const outputFilePath = `${inputFilePath}.processed`;
+	const proc = Bun.spawn([
+		"ffmpeg",
+		"-i",
+		inputFilePath,
+		"-movflags",
+		"faststart",
+		"-map_metadata",
+		"0",
+		"-codec",
+		"copy",
+		"-f",
+		"mp4",
+		outputFilePath,
+	]);
+	// run the command
+	const stdoutText = await new Response(proc.stdout).text();
+	console.log("stdoutText: ", stdoutText);
+	const stderr = await new Response(proc.stderr).text();
+	const exitCode = await proc.exited;
+
+	if (exitCode !== 0) {
+		throw new Error(
+			`Bun spawned an error with exit code ${exitCode}: ${stderr}`,
+		);
+	}
+	// return output filePath
+	return outputFilePath;
 }
