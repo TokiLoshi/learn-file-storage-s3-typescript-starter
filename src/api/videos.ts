@@ -3,7 +3,7 @@ import { respondWithJSON } from "./json";
 import { type ApiConfig } from "../config";
 import { S3Client, type BunRequest } from "bun";
 import { getBearerToken, validateJWT } from "../auth";
-import { getVideo, updateVideo } from "../db/videos";
+import { getVideo, updateVideo, type Video } from "../db/videos";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import { getAssetDiskPath, getAssetURL, mediaTypeToExt } from "./assets";
 import { randomBytes } from "crypto";
@@ -67,13 +67,16 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 			await unlink(processedVideo);
 		}
 	}
+	// video.videoURL = videoUrl;
+	// const videoUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${s3Key}`;
+	const videoKey = `${s3Key}`;
 
-	const videoUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${s3Key}`;
-	video.videoURL = videoUrl;
-	const updatedVideo = updateVideo(cfg.db, video);
-	console.log("Updated video: ", updatedVideo);
+	video.videoURL = videoKey;
+	console.log("video url before sending to db: ", video);
+	updateVideo(cfg.db, video);
+	const signedVideo = dbVideoToSignedVideo(cfg, video);
 
-	return respondWithJSON(200, null);
+	return respondWithJSON(200, signedVideo);
 }
 
 export async function getVideoAspectRatio(filePath: string) {
@@ -160,4 +163,33 @@ export async function processVideoForFastStart(inputFilePath: string) {
 	}
 	// return output filePath
 	return outputFilePath;
+}
+
+export function generatePresignedURL(
+	cfg: ApiConfig,
+	key: string,
+	expireTime: number,
+) {
+	// use Bun's S3Client.presign to generate presigned URL
+	const presignedURL = cfg.s3Client.presign(key, {
+		expiresIn: expireTime,
+	});
+	// return presign URL
+	return presignedURL;
+}
+
+export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video) {
+	// take a video as input and return video with presigned URL
+	// use current VideoURL containing key value
+	console.log(video);
+	const url = video.videoURL;
+	if (!url) {
+		return video;
+	}
+	// generatePresigned URL for video
+	const presignedURL = generatePresignedURL(cfg, url, 3600);
+	video.videoURL = presignedURL;
+	return video;
+	// set the VideoURL field as the presigned URL
+	// return the updated video
 }
